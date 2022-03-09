@@ -86,12 +86,11 @@ training_in_action = False
 testing_in_action = False
 
 # Model Info
-model_loaded = False
 model = None
 model_path = "saved_model.h5"
 
 
-def initialize():
+def initialize_program():
     global mat_display, key
     mat_display = np.zeros((window_height, window_width, 3), np.uint8)
 
@@ -108,6 +107,24 @@ def initialize():
         path_name = training_directory+"/hand_"+str(i)+"/"
         if not os.path.exists(path_name):
             os.makedirs(path_name)
+
+
+def init_tensorflow():
+    global tensorflow_initialized
+
+    if not tensorflow_initialized:
+        tensorflow_initialized = True
+        print("Initializing TF...")
+        fill_with_color(img=mat_display, color=c_black)
+        draw_header(subtitle="Loading TensorFlow, Please Wait...")
+        draw_footer(subtitle="This takes a few seconds each time you run the program.")
+        cv2.imshow(winname=program_name, mat=mat_display)
+        cv2.waitKey(1)
+
+    import tensorflow as tf
+    print("TensorFlow:", tf.__version__)
+
+    return tf
 
 
 def initialize_training():
@@ -135,6 +152,23 @@ def initialize_testing():
     except:
         print_to_textbox(textbox=textbox_testing, text="Couldn't load model.")
         model = None
+
+
+def initialize_live():
+    global model
+    tf = init_tensorflow()
+    try:
+        model = tf.keras.models.load_model(model_path)
+        print_to_textbox(textbox=textbox_testing, text="Loaded model!")
+    except:
+        print_to_textbox(textbox=textbox_testing, text="Couldn't load model.")
+        model = None
+
+
+def show_notification(text):
+    global display_message, display_message_timer
+    display_message = "> " + text
+    display_message_timer = datetime.datetime.now()
 
 
 def draw_text(img, text, x, y, color, scale=1, font=cv2.FONT_HERSHEY_DUPLEX):
@@ -165,11 +199,79 @@ def draw_footer(subtitle):
     draw_text(img=mat_display, text=subtitle, x=15, y=window_height - subtitle_height - 22, color=c_white, font=footer_font)
 
 
+def draw_crosshair(mat, x, y, color):
+    crosshair_size = 5
+
+    cv2.circle(img=mat, center=(x, y), radius=crosshair_size, color=color)
+    cv2.line(img=mat, pt1=(x, y-crosshair_size), pt2=(x, y+crosshair_size), color=color)
+    cv2.line(img=mat, pt1=(x-crosshair_size, y), pt2=(x+crosshair_size, y), color=color)
+
+
+def draw_notification():
+    global mat_display, display_message, display_message_timer
+    now = datetime.datetime.now()
+    if (now - display_message_timer).seconds < 5:
+        (subtitle_width, subtitle_height), baseline = cv2.getTextSize(text=display_message, fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1, thickness=1)
+        draw_text(img=mat_display, text=display_message, x=window_width-subtitle_width - 15, y=header_height+30, color=c_white, scale=.75)
+
+
 def fill_with_color(img, color):
     img[0:img.shape[0], 0:img.shape[1]] = color
 
 
-def click_video(event, x, y, flags, param):
+def capture_hand():  # Returns: (Success, Mat, TopLeft (x, y), BottomRight (x, y))
+    global click_happened, click_x, click_y, target_x, target_y, key
+    mat_camera = get_camera_frame()
+
+    mat_camera = cv2.cvtColor(src=mat_camera, code=cv2.COLOR_BGR2HSV)
+    mat_camera_hue, mat_camera_sat, mat_camera_val = cv2.split(mat_camera)
+
+    retval, mat_camera_val = cv2.threshold(src=mat_camera_val, thresh=200, maxval=255, type=cv2.THRESH_BINARY)
+
+    mat_camera_val = cv2.dilate(src=mat_camera_val, kernel=cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5)))
+    #mat_camera_val = cv2.erode(src=mat_camera_val, kernel=cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(3, 3)))
+    mat_camera_val = cv2.merge([mat_camera_val, mat_camera_val, mat_camera_val])
+
+    cv2.floodFill(image=mat_camera_val, mask=None, seedPoint=(target_x, target_y), newVal=c_blue)
+    mat_camera_val[np.where((mat_camera_val == [255, 255, 255]).all(axis=2))] = c_black
+    mat_camera_val[np.where((mat_camera_val == c_blue).all(axis=2))] = c_white
+
+    # For filling in gaps
+    #mat_inpaint = mat_camera_val.copy()
+    #cv2.floodFill(image=mat_inpaint, mask=None, seedPoint=(0, 0), newVal=c_white)
+    #mat_inpaint = (255-mat_inpaint)
+    #mat_camera_val += mat_inpaint
+
+    min_x, min_y, width, height = cv2.boundingRect(array=cv2.split(mat_camera_val)[0])
+    print(min_x, min_y, width, height)
+
+    max_x = min_x+width
+    max_y = min_y+height
+
+    mid_x = (min_x + max_x)/2
+    mid_y = (min_y + max_y)/2
+
+    size = max(width, height)
+
+    if (size > 5 and size < min(window_width, window_height)*.9):
+        return True, mat_camera_val[int(mid_y-size/2):int(mid_y+size/2), int(mid_x-size/2):int(mid_x+size/2)], (int(mid_x-size/2), int(mid_y-size/2)), (int(mid_x+size/2), int(mid_y+size/2))
+
+    return False, None, (0, 0), (0, 0)
+
+
+def save_iteration(dir, name, mat):
+    print(dir+name+"*")
+    fileticker = 0
+    while(fileticker < 100000):
+        fileticker += 1
+        full_path = dir+name+str(fileticker)+".png"
+        if not os.path.exists(full_path):
+            cv2.imwrite(full_path, mat)
+            show_notification(text="Saved "+full_path)
+            break
+
+
+def click_mouse(event, x, y, flags, param):
     global click_happened, click_x, click_y
 
     if event == cv2.EVENT_LBUTTONDOWN:
@@ -179,15 +281,43 @@ def click_video(event, x, y, flags, param):
         print('CLICK: x = '+str(x)+', y = '+str(y))
 
 
-def initialize_live():
-    global model
-    tf = init_tensorflow()
-    try:
-        model = tf.keras.models.load_model(model_path)
-        print_to_textbox(textbox=textbox_testing, text="Loaded model!")
-    except:
-        print_to_textbox(textbox=textbox_testing, text="Couldn't load model.")
-        model = None
+def reset_mouse():
+    global click_happened, click_x, click_y
+
+    click_happened = False
+    click_x = -1
+    click_y = -1
+
+
+def get_camera_frame():
+    global camera_id, camera_initialized, camera_handle
+
+    if not camera_initialized:
+        print("Initializing Camera...")
+        fill_with_color(img=mat_display, color=c_black)
+        draw_header(subtitle="Loading Camera, Please Wait...")
+        draw_footer(subtitle="This takes a few seconds each time you run the program.")
+        cv2.imshow(winname=program_name, mat=mat_display)
+        cv2.waitKey(1)
+        camera_initialized = True
+        camera_handle = cv2.VideoCapture(camera_id)
+        camera_handle.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+        camera_handle.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+        print("Found Webcam!")
+
+    ret_val, mat_camera = camera_handle.read()
+
+    if not ret_val:
+        mat_camera = np.zeros((camera_height, camera_width, 3), np.uint8)
+
+    return mat_camera
+
+
+def print_to_textbox(textbox, text):
+    textbox.append("- "+text)
+    print(text)
+    if len(textbox) > textbox_maxlines:
+        textbox.pop(0)
 
 
 def run_main_menu():
@@ -235,66 +365,6 @@ def run_options():
     for _x in range(camera_preview_w):
         for _y in range(camera_preview_h):
             mat_display[window_height-camera_preview_h+_y, window_width-camera_preview_w+_x] = camera_preview[_y, _x]
-
-
-def capture_hand():  # Returns: (Success, Mat, TopLeft (x, y), BottomRight (x, y))
-    global click_happened, click_x, click_y, target_x, target_y, key
-    mat_camera = get_camera_frame()
-
-    mat_camera = cv2.cvtColor(src=mat_camera, code=cv2.COLOR_BGR2HSV)
-    mat_camera_hue, mat_camera_sat, mat_camera_val = cv2.split(mat_camera)
-
-    retval, mat_camera_val = cv2.threshold(src=mat_camera_val, thresh=200, maxval=255, type=cv2.THRESH_BINARY)
-
-    mat_camera_val = cv2.dilate(src=mat_camera_val, kernel=cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5)))
-    #mat_camera_val = cv2.erode(src=mat_camera_val, kernel=cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(3, 3)))
-    mat_camera_val = cv2.merge([mat_camera_val, mat_camera_val, mat_camera_val])
-
-    cv2.floodFill(image=mat_camera_val, mask=None, seedPoint=(target_x, target_y), newVal=c_blue)
-    mat_camera_val[np.where((mat_camera_val == [255, 255, 255]).all(axis=2))] = c_black
-    mat_camera_val[np.where((mat_camera_val == c_blue).all(axis=2))] = c_white
-
-    mat_inpaint = mat_camera_val.copy()
-    cv2.floodFill(image=mat_inpaint, mask=None, seedPoint=(0, 0), newVal=c_white)
-    mat_inpaint = (255-mat_inpaint)
-
-    #mat_camera_val += mat_inpaint
-
-    min_x, min_y, width, height = cv2.boundingRect(array=cv2.split(mat_camera_val)[0])
-    print(min_x, min_y, width, height)
-
-    max_x = min_x+width
-    max_y = min_y+height
-
-    mid_x = (min_x + max_x)/2
-    mid_y = (min_y + max_y)/2
-
-    size = max(width, height)
-
-    if (size > 5 and size < min(window_width, window_height)*.9):
-        return True, mat_camera_val[int(mid_y-size/2):int(mid_y+size/2), int(mid_x-size/2):int(mid_x+size/2)], (int(mid_x-size/2), int(mid_y-size/2)), (int(mid_x+size/2), int(mid_y+size/2))
-
-    return False, None, (0, 0), (0, 0)
-
-
-def save_iteration(dir, name, mat):
-    print(dir+name+"*")
-    fileticker = 0
-    while(fileticker < 100000):
-        fileticker += 1
-        full_path = dir+name+str(fileticker)+".png"
-        if not os.path.exists(full_path):
-            cv2.imwrite(full_path, mat)
-            show_notification(text="Saved "+full_path)
-            break
-
-
-def draw_crosshair(mat, x, y, color):
-    crosshair_size = 5
-
-    cv2.circle(img=mat, center=(x, y), radius=crosshair_size, color=color)
-    cv2.line(img=mat, pt1=(x, y-crosshair_size), pt2=(x, y+crosshair_size), color=color)
-    cv2.line(img=mat, pt1=(x-crosshair_size, y), pt2=(x+crosshair_size, y), color=color)
 
 
 def run_capture():
@@ -362,7 +432,7 @@ def run_testing():
 
             for file_path in list_of_files:
                 img = tf.keras.utils.load_img(file_path, target_size=(training_img_height, training_img_width))
-                
+
                 img_array = tf.keras.utils.img_to_array(img)
                 img_array = tf.expand_dims(img_array, 0)
 
@@ -392,13 +462,6 @@ def run_testing():
         testing_in_action = False
 
 
-def print_to_textbox(textbox, text):
-    textbox.append("- "+text)
-    print(text)
-    if len(textbox) > textbox_maxlines:
-        textbox.pop(0)
-
-
 def run_training():
     global mat_display, textbox_training, training_in_action
 
@@ -421,6 +484,7 @@ def run_training():
         training_in_action = True
         tf = init_tensorflow()
 
+        # All the built-in callbacks, grabbing the ones I want to use for now
         class AllCallbacks(tf.keras.callbacks.Callback):
             def on_train_begin(self, logs=None):
                 print_to_textbox(textbox=textbox_training, text="- - - - - - - -")
@@ -539,70 +603,6 @@ def run_training():
         training_in_action = False
 
 
-def get_camera_frame():
-    global camera_id, camera_initialized, camera_handle
-
-    if not camera_initialized:
-        print("Initializing Camera...")
-        fill_with_color(img=mat_display, color=c_black)
-        draw_header(subtitle="Loading Camera, Please Wait...")
-        draw_footer(subtitle="This takes a few seconds each time you run the program.")
-        cv2.imshow(winname=program_name, mat=mat_display)
-        cv2.waitKey(1)
-        camera_initialized = True
-        camera_handle = cv2.VideoCapture(camera_id)
-        camera_handle.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
-        camera_handle.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
-        print("Found Webcam!")
-
-    ret_val, mat_camera = camera_handle.read()
-
-    if not ret_val:
-        mat_camera = np.zeros((camera_height, camera_width, 3), np.uint8)
-
-    return mat_camera
-
-
-def init_tensorflow():
-    global tensorflow_initialized
-
-    if not tensorflow_initialized:
-        tensorflow_initialized = True
-        print("Initializing TF...")
-        fill_with_color(img=mat_display, color=c_black)
-        draw_header(subtitle="Loading TensorFlow, Please Wait...")
-        draw_footer(subtitle="This takes a few seconds each time you run the program.")
-        cv2.imshow(winname=program_name, mat=mat_display)
-        cv2.waitKey(1)
-
-    import tensorflow as tf
-    print("TensorFlow:", tf.__version__)
-    
-    return tf
-
-
-def reset_mouse():
-    global click_happened, click_x, click_y
-
-    click_happened = False
-    click_x = -1
-    click_y = -1
-
-
-def show_notification(text):
-    global display_message, display_message_timer
-    display_message = "> " + text
-    display_message_timer = datetime.datetime.now()
-
-
-def draw_notification():
-    global mat_display, display_message, display_message_timer
-    now = datetime.datetime.now()
-    if (now - display_message_timer).seconds < 5:
-        (subtitle_width, subtitle_height), baseline = cv2.getTextSize(text=display_message, fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1, thickness=1)
-        draw_text(img=mat_display, text=display_message, x=window_width-subtitle_width - 15, y=header_height+30, color=c_white, scale=.75)
-
-
 def run_live():
     global mat_display, click_happened, click_x, click_y, target_x, target_y, key, model
     fill_with_color(img=mat_display, color=(64, 128, 64))
@@ -652,7 +652,7 @@ def run_live():
 
 def main():
     global mat_display, key, program_running, mode, training_in_action
-    initialize()
+    initialize_program()
 
     cv2.imshow(winname=program_name, mat=mat_display)
 
@@ -688,7 +688,7 @@ def main():
         reset_mouse()
 
         cv2.imshow(winname=program_name, mat=mat_display)
-        cv2.setMouseCallback(program_name, click_video)
+        cv2.setMouseCallback(program_name, click_mouse)
 
     cv2.destroyAllWindows()
 
