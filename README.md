@@ -10,3 +10,6 @@ Tested With:
 - TensorFlow: 2.9.0-dev20220304
 
 ![](https://i.imgur.com/mvgIecO.gif)
+
+Video Demo:
+![https://youtu.be/97ht22zzqRI](https://i.imgur.com/tdNWQm6.png)
