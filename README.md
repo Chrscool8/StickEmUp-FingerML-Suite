@@ -11,5 +11,6 @@ Tested With:
 
 ![](https://i.imgur.com/mvgIecO.gif)
 
-Video Demo:
-[![](https://i.imgur.com/tdNWQm6.png)](https://youtu.be/97ht22zzqRI)
+Video Demo (Clicks Through to YouTube):
+
+[![](media/FingerML_Demo.webp)](https://youtu.be/97ht22zzqRI)
