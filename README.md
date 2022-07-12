@@ -12,4 +12,4 @@ Tested With:
 ![](https://i.imgur.com/mvgIecO.gif)
 
 Video Demo:
-![https://youtu.be/97ht22zzqRI](https://i.imgur.com/tdNWQm6.png)
+[![](https://i.imgur.com/tdNWQm6.png)](https://youtu.be/97ht22zzqRI)
